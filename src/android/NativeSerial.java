@@ -1,5 +1,7 @@
 package me.izee.cordova.plugin;
 
+import android.util.Base64;
+import android.util.Log;
 import android_serialport_api.SerialPort;
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -10,112 +12,122 @@ import org.json.JSONException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.concurrent.Future;
 
 /**
  * This class echoes a string called from JavaScript.
  */
 public class NativeSerial extends CordovaPlugin {
-
+  private static final String LOG_TAG = "NativeSerial";
   private SerialPort port;
-  private CallbackContext watchCallback;
-  private Thread watchThread;
+  private List<CallbackContext> watchers = new LinkedList<CallbackContext>();
+  private Future futureWatch;
 
   @Override
   public boolean execute(String action, JSONArray args, final CallbackContext callbackContext) throws JSONException {
 
-    switch (action) {
-      case "open": {
-        final String device = args.getString(0);
-        final int rate = args.getInt(1);
-        cordova.getThreadPool().execute(new Runnable() {
-          public void run() {
-            NativeSerial.this.openPort(device, rate, callbackContext);
-          }
-        });
-        return true;
-      }
-      case "close":
-        cordova.getThreadPool().execute(new Runnable() {
-          public void run() {
-            NativeSerial.this.closePort(callbackContext);
-          }
-        });
-        return true;
-      case "write": {
-        final String data = args.getString(0);
-        cordova.getThreadPool().execute(new Runnable() {
-          public void run() {
-            NativeSerial.this.write(data, callbackContext);
-          }
-        });
-        return true;
-      }
-      case "watch": {
-        cordova.getThreadPool().execute(new Runnable() {
-          public void run() {
-            NativeSerial.this.registerWatcher(callbackContext);
-          }
-        });
-        return true;
-      }
+    if (action.equals("open")) {
+      Log.d(LOG_TAG, "execute open");
+      final String device = args.getString(0);
+      final int rate = args.getInt(1);
+      cordova.getThreadPool().execute(new Runnable() {
+        public void run() {
+          NativeSerial.this.openPort(device, rate, callbackContext);
+          NativeSerial.this.startWatch();
+        }
+      });
+      return true;
+    } else if (action.equals("close")) {
+      cordova.getThreadPool().execute(new Runnable() {
+        public void run() {
+          NativeSerial.this.closePort(callbackContext);
+        }
+      });
+      return true;
+    } else if (action.equals("write")) {
+      final String data = args.getString(0);
+      Log.d(LOG_TAG, "execute write:" + data);
+      cordova.getThreadPool().execute(new Runnable() {
+        public void run() {
+          byte[] decode = Base64.decode(data, Base64.NO_WRAP);
+          Log.d(LOG_TAG, "write bytes:" + decode);
+          NativeSerial.this.writeBytes(decode, callbackContext);
+        }
+      });
+      return true;
+    } else if (action.equals("writeText")) {
+      final String data = args.getString(0);
+      cordova.getThreadPool().execute(new Runnable() {
+        public void run() {
+          NativeSerial.this.writeText(data, callbackContext);
+        }
+      });
+      return true;
+    } else if (action.equals("register")) {
+      cordova.getThreadPool().execute(new Runnable() {
+        public void run() {
+          watchers.add(callbackContext);
+          NativeSerial.this.startWatch();
+        }
+      });
+      return true;
     }
+    Log.d(LOG_TAG, "unknown action:" + action);
     return false;
   }
 
-  private void registerWatcher(final CallbackContext callbackContext) {
-    cordova.getThreadPool().execute(new Runnable() {
+  private synchronized void startWatch() {
+    if (futureWatch != null && !(futureWatch.isDone() || futureWatch.isCancelled())) {
+      return;
+    }
+    futureWatch = cordova.getThreadPool().submit(new Runnable() {
       public void run() {
+        Log.d(LOG_TAG, "watch start run");
         while (!Thread.currentThread().isInterrupted()) {
           if (NativeSerial.this.port == null) {
             try {
-              Thread.sleep(5000);
-              continue;
+              Thread.sleep(500);
             } catch (InterruptedException e) {
               e.printStackTrace();
             }
           }
           InputStream inputStream = NativeSerial.this.port.getInputStream();
-          byte[] buffer = new byte[1024];
-          if (inputStream == null) continue;
+
+          if (inputStream == null) {
+            try {
+              Thread.sleep(500);
+            } catch (InterruptedException e) {
+              e.printStackTrace();
+            }
+          }
           try {
+            byte[] buffer = new byte[64];
             int size = inputStream.read(buffer);
             if (size > 0) {
+              Log.d(LOG_TAG, String.format("%s,got input:%s", System.currentTimeMillis(), size));
 //              PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, new String(buffer, 0, size));
-              PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, Arrays.copyOf(buffer,size) );
+              byte[] data = Arrays.copyOf(buffer, size);
+              PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, data);
               pluginResult.setKeepCallback(true);
-              callbackContext.sendPluginResult(pluginResult);
+              for (CallbackContext watcher : watchers) {
+                watcher.sendPluginResult(pluginResult);
+              }
             }
           } catch (Exception e) {
             e.printStackTrace();
             PluginResult error = new PluginResult(PluginResult.Status.ERROR, e.getMessage());
             error.setKeepCallback(true);
-            callbackContext.sendPluginResult(error);
+            for (CallbackContext watcher : watchers) {
+              watcher.sendPluginResult(error);
+            }
           }
         }
       }
     });
-  }
-
-  private class watchThread extends Thread {
-    @Override
-    public void run() {
-      while (true) {
-//          InputStream inputStream = NativeSerial.this.port.getInputStream();
-//          byte[] buffer = new byte[64];
-//          if (inputStream == null) return;
-        try {
-//            int size = inputStream.read(buffer);
-//            if (size > 0) {
-//              callbackContext.success(new String(buffer));
-//            }
-          NativeSerial.this.watchCallback.success(Boolean.toString(Thread.currentThread().isInterrupted()));
-        } catch (Exception e) {
-          e.printStackTrace();
-          NativeSerial.this.watchCallback.error(e.getMessage());
-        }
-      }
-    }
   }
 
   private void openPort(String device, int rate, CallbackContext callbackContext) {
@@ -140,7 +152,20 @@ public class NativeSerial extends CordovaPlugin {
     callbackContext.success();
   }
 
-  private void write(final String data, final CallbackContext callbackContext) {
+  private void writeBytes(final byte[] bytes, final CallbackContext callbackContext) {
+    try {
+      OutputStream outputStream = NativeSerial.this.port.getOutputStream();
+      outputStream.write(10);
+      outputStream.write(13);
+      outputStream.write(bytes);
+      callbackContext.success();
+    } catch (IOException e) {
+      e.printStackTrace();
+      callbackContext.error(e.getMessage());
+    }
+  }
+
+  private void writeText(final String data, final CallbackContext callbackContext) {
     try {
       NativeSerial.this.port.getOutputStream().write(data.getBytes());
       callbackContext.success();

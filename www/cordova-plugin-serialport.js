@@ -1,14 +1,17 @@
 var exec = require('cordova/exec');
 
-exports.open = function(device,rate, success, error) {
-    exec(success, error, "cordova-plugin-serialport", "open", [device,rate]);
+exports.open = function (device, rate, success, error) {
+    exec(success, error, "cordova-plugin-serialport", "open", [device, rate]);
 };
-exports.write = function(data, success, error) {
-    exec(success, error, "cordova-plugin-serialport", "write", [data]);
+exports.write = function (arrayBuffer, success, error) {
+    exec(success, error, "cordova-plugin-serialport", "write", [arrayBuffer]);
 };
-exports.close = function(success, error) {
+exports.writeText = function (text, success, error) {
+    exec(success, error, "cordova-plugin-serialport", "writeText", [text]);
+};
+exports.close = function (success, error) {
     exec(success, error, "cordova-plugin-serialport", "close", []);
 };
-exports.watch = function(success, error) {
-    exec(success, error, "cordova-plugin-serialport", "watch", []);
+exports.register = function (success, error) {
+    exec(success, error, "cordova-plugin-serialport", "register", []);
 };

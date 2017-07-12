@@ -4,6 +4,7 @@
     <name>cordova-plugin-serialport</name>
     <js-module name="serialport" src="www/cordova-plugin-serialport.js">
         <clobbers target="cordova.plugins.serialport"/>
+        <clobbers target="serialport"/>
     </js-module>
     <platform name="android">
         <config-file parent="/*" target="res/xml/config.xml">
