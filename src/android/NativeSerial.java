@@ -155,8 +155,6 @@ public class NativeSerial extends CordovaPlugin {
   private void writeBytes(final byte[] bytes, final CallbackContext callbackContext) {
     try {
       OutputStream outputStream = NativeSerial.this.port.getOutputStream();
-      outputStream.write(10);
-      outputStream.write(13);
       outputStream.write(bytes);
       callbackContext.success();
     } catch (IOException e) {
